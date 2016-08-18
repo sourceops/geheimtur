@@ -4,6 +4,7 @@
             [geheimtur.util.response :as response]
             [geheimtur.util.auth :refer [authenticate]]
             [io.pedestal.log :as log]
+            [io.pedestal.interceptor.helpers :as h]
             [ring.util.codec :as ring-codec])
   (:import [java.math BigInteger]
            [java.security SecureRandom]))
@@ -40,26 +41,29 @@
                             OAuth2 token response. The successfuly parsed response must have at least :access_token key.
       :user-info-url      - if defined, will be used to get user's details after successful access token acquisition
       :user-info-parse-fn - if definded, will be applied to the response of user's details endpoint
-      :on-success-handler - a function that accepts an obtained identity/access token map, that should return correct ring response.
+      :on-success-handler - a function that accepts a request context and an obtained identity/access token map and returns a correct ring response.
                             It is called only if an identity/access token is resolved."
   [providers]
-  (fn [{:keys [query-params] :as request}]
-    (when-let [provider (:provider query-params)]
-      (when-let [{:keys [auth-url client-id scope callback-uri]} (get providers (keyword provider))]
-        (let [token (create-afs-token)
-              query {:client_id     client-id
-                     :response_type "code"
-                     :scope         scope
-                     :state         token}
-              query (if callback-uri
-                      (assoc query :redirect_uri callback-uri)
-                      query)
-              path  (or (:return query-params) "/")]
-          (-> (create-url auth-url query)
-              (response/redirect)
-              (assoc-in [:session ::callback-state] {:return   path
-                                                     :token    token
-                                                     :provider provider})))))))
+  (h/handler
+   ::authenticate-handler
+   (fn [req]
+     (let [{:keys [query-params] :as request} req]
+       (when-let [provider (:provider query-params)]
+         (when-let [{:keys [auth-url client-id scope callback-uri]} (get providers (keyword provider))]
+           (let [token (create-afs-token)
+                 query {:client_id     client-id
+                        :response_type "code"
+                        :scope         scope
+                        :state         token}
+                 query (if callback-uri
+                         (assoc query :redirect_uri callback-uri)
+                         query)
+                 path  (or (:return query-params) "/")]
+             (-> (create-url auth-url query)
+                 (response/redirect)
+                 (assoc-in [:session ::callback-state] {:return   path
+                                                        :token    token
+                                                        :provider provider})))))))))
 
 (defn fetch-token
   "Fetches an OAuth access token using the given code and provider's configuration."
@@ -129,16 +133,20 @@
 (defn callback-handler
   "Creates an OAuth call-back handler based on a map of OAuth providers.
 
-  If authentication flow fails for any reason, the user will be redirected to /unauthorised url."
+  If authentication flow fails for any reason, the user will be redirected to /unauthorized url."
   [providers]
-  (fn [{:keys [query-params session] :as request}]
-    (let [{:keys [state code]}               query-params
-          {:keys [return token provider]}    (::callback-state session)
-          {:keys [on-success-handler] :as p} (get providers (keyword provider))]
-      (if (and state code return token provider (= state token) p)
-        (if-let [identity (process-callback code p)]
-          (if on-success-handler
-            (on-success-handler (assoc identity :return return))
-            (authenticate (response/redirect return) identity))
-          (response/redirect "/unauthorized"))
-        (response/redirect "/unauthorized")))))
+  (h/before
+   ::callback-handler
+   (fn [{request :request :as context}]
+     (let [{:keys [query-params session]}     request
+           {:keys [state code]}               query-params
+           {:keys [return token provider]}    (::callback-state session)
+           {:keys [on-success-handler] :as p} (get providers (keyword provider))]
+       (assoc context :response
+              (if (and state code return token provider (= state token) p)
+                (if-let [identity (process-callback code p)]
+                  (if on-success-handler
+                    (on-success-handler context (assoc identity :return return))
+                    (authenticate (response/redirect return) identity))
+                  (response/redirect "/unauthorized"))
+                (response/redirect "/unauthorized")))))))

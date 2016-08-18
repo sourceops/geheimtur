@@ -13,19 +13,23 @@ Pedestal applications as easily (hopefully) as [friend] [2] does with Ring appli
 Also, I didn't want to mess around with routing that is handled quite nicely by Pedestal itself, so if an authentication flow
 requires some extra routes to be added, those route should be plugged into the Pedestal routing system manually.
 
+## ChangeLog
+
+The ChangeLog and migration instructions can be found in [CHANGES.md](CHANGES.md).
+
 ## Usage
 
 Include the library in your leiningen project dependencies:
 
 ```clojure
-[geheimtur "0.1.5"]
+[geheimtur "0.3.0"]
 ```
 
 ## Examples
 
 You can find the sources of a demo application in [geheimtur-demo] [3] repository.
 
-**The examples below does not duplicate information available as docstrings, if want to know all available options - check the docs in the code.**
+**The examples below do not duplicate information available as docstrings, if you want to know all available options - check the docs in the code.**
 
 ### Securing a page
 
@@ -33,7 +37,7 @@ When you need to limit access to a specific page or a sub-tree of pages, you jus
 You can adjust the interceptor behaviour using the following optional parameters:
 
 - `:roles` - a set of roles that are allowed to access the page, if not defined users are required to just be authenticated
-- `:silent?` - a flag to effect unauthorized/unauthenticated behaviours. If set to `true` (default), users will be getting a 404 Not Found error page when they don't have access rights
+- `:silent?` - a flag to affect unauthorized/unauthenticated behaviours. If set to `true` (default), users will be getting a 404 Not Found error page when they don't have access rights
 - `:unauthenticated-fn` - an unauthenticated error state handler. It's a function that accepts a Pedestal context. The default implementation, throws an exception with a type of `:unauthenticated`
 - `:unauthorized-fn` - an unauthorized error state handler. It's a function that accepts a Pedestal context. The default implementation, throws an exception with a type of `:unauthorized`
 
@@ -56,7 +60,7 @@ can be handled either by the `http-basic` or `interactive` interceptor that dete
 You can enable http-basic authentication by putting the `http-basic` interceptor before any of your guards. It takes the following parameters:
 
 - `realm` - a string that will be shown to a user when s/he is prompted to enter credentials
-- `credential-fn` - a function that, given a username and password, returns a corresponding identity
+- `credential-fn` - a function that, given a request context and a map with username and password, returns a corresponding identity
 
 ```clojure
 (defroutes routes
@@ -79,15 +83,12 @@ After doing so, you just need to add handlers that render the login page and aut
 that can be used to authenticate users when you don't want to implement your own. The `form-based` interceptor requires sessions to be enabled.
 
 ```clojure
-(def login-post-handler
-  (default-login-handler {:credential-fn credentials}))
-
 (defroutes routes
   [[["/" {:get views/home-page}
      ^:interceptors [(body-params/body-params)
                      bootstrap/html-body
                      session-interceptor]
-     ["/login" {:get views/login-page :post login-post-handler}]
+     ["/login" {:get views/login-page :post (default-login-handler {:credential-fn credentials})}]
      ["/logout" {:get default-logout-handler}]
      ["/interactive" {:get views/interactive-index} ^:interceptors [access-forbidden-interceptor (interactive {})]
       ["/restricted" {:get views/interactive-restricted} ^:interceptors [(guard :silent? false)]]]]]])
@@ -112,12 +113,6 @@ Geheimtur provides handlers for users redirection and callbacks out of the box, 
             :user-info-url      "https://api.github.com/user"
             :user-info-parse-fn #(-> % :body (parse-string true))}})
 
-(def oath-handler
-  (authenticate-handler providers))
-
-(def oath-callback-handler
-  (callback-handler providers))
-
 (defroutes routes
   [[["/" {:get views/home-page}
      ^:interceptors [(body-params/body-params)
@@ -125,8 +120,8 @@ Geheimtur provides handlers for users redirection and callbacks out of the box, 
                      session-interceptor]
      ["/login" {:get views/login-page :post login-post-handler}]
      ["/logout" {:get default-logout-handler}]
-     ["/oauth.login" {:get oath-handler}]
-     ["/oauth.callback" {:get oath-callback-handler}]
+     ["/oauth.login" {:get (authenticate-handler providers)}]
+     ["/oauth.callback" {:get (callback-handler providers)}]
      ["/interactive" {:get views/interactive-index} ^:interceptors [access-forbidden-interceptor (interactive {})]
       ["/restricted" {:get views/interactive-restricted} ^:interceptors [(guard :silent? false)]]]]]])
 ```
@@ -135,7 +130,7 @@ A complete example can be found [here] [3].
 
 ## License
 
-Copyright © 2013 Pavel Prokopenko
+Copyright © 2015 Pavel Prokopenko
 
 Distributed under the Eclipse Public License either version 1.0 or (at
 your option) any later version.
